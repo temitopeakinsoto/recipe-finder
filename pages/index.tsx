@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useRouter } from "next/router";
 import SearchBar from "@/components/SearchBar";
 import FilterPanel from "@/components/FilterPanel";
@@ -60,6 +60,13 @@ export default function Home() {
 
   // Track if this is the initial load to prevent double fetching
   const [isInitialized, setIsInitialized] = useState(false);
+
+  // Track previous filter values to detect actual changes
+  const prevFiltersRef = useRef({
+    searchQuery: "",
+    categories: [] as string[],
+    areas: [] as string[],
+  });
 
   /**
    * Initialize state from URL parameters on mount
@@ -185,58 +192,41 @@ export default function Home() {
   }, [searchQuery]);
 
   /**
+   * Reset to page 1 when filters change
+   */
+  useEffect(() => {
+    if (!isInitialized) return;
+
+    const prev = prevFiltersRef.current;
+
+    // Check if filters actually changed (compare values, not references)
+    const searchChanged = prev.searchQuery !== debouncedSearchQuery;
+    const categoriesChanged =
+      prev.categories.length !== selectedCategories.length ||
+      !prev.categories.every((cat) => selectedCategories.includes(cat));
+    const areasChanged =
+      prev.areas.length !== selectedAreas.length ||
+      !prev.areas.every((area) => selectedAreas.includes(area));
+
+    if (searchChanged || categoriesChanged || areasChanged) {
+      setCurrentPage(1);
+
+      // Update ref with current values
+      prevFiltersRef.current = {
+        searchQuery: debouncedSearchQuery,
+        categories: [...selectedCategories],
+        areas: [...selectedAreas],
+      };
+    }
+  }, [debouncedSearchQuery, selectedCategories, selectedAreas, isInitialized]);
+
+  /**
    * Fetch meals when filters or search query change
    */
-  // useEffect(() => {
-  //   async function loadMeals() {
-  //     setIsLoadingMeals(true);
-  //     setError(null);
-  //     setCurrentPage(1); // Reset to first page when filters change
-
-  //     try {
-  //       // If no search query and no filters, show empty state
-  //       if (
-  //         !debouncedSearchQuery &&
-  //         selectedCategories.length === 0 &&
-  //         selectedAreas.length === 0
-  //       ) {
-  //         setAllMeals([]);
-  //         setIsLoadingMeals(false);
-  //         return;
-  //       }
-
-  //       // Fetch filtered meals
-  //       const meals = await getFilteredMeals({
-  //         searchQuery: debouncedSearchQuery,
-  //         categories: selectedCategories,
-  //         areas: selectedAreas,
-  //       });
-
-  //       setAllMeals(meals);
-  //     } catch (err) {
-  //       setError(
-  //         err instanceof Error
-  //           ? err.message
-  //           : "Failed to load meals. Please try again."
-  //       );
-  //       setAllMeals([]);
-  //     } finally {
-  //       setIsLoadingMeals(false);
-  //     }
-  //   }
-
-  //   loadMeals();
-  // }, [debouncedSearchQuery, selectedCategories, selectedAreas]);
-
   useEffect(() => {
     async function loadMeals() {
       setIsLoadingMeals(true);
       setError(null);
-
-      // Only reset page AFTER initial hydration
-      if (isInitialized) {
-        setCurrentPage(1);
-      }
 
       try {
         if (
@@ -269,7 +259,7 @@ export default function Home() {
     }
 
     loadMeals();
-  }, [debouncedSearchQuery, selectedCategories, selectedAreas, isInitialized]);
+  }, [debouncedSearchQuery, selectedCategories, selectedAreas]);
 
   /**
    * Calculate paginated meals
