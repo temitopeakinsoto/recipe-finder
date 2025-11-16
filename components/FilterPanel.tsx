@@ -16,21 +16,16 @@ interface FilterPanelProps {
   onCategoryToggle: (category: string) => void;
   /** Callback when an area is toggled */
   onAreaToggle: (area: string) => void;
+  /** Callback when clear filters button is clicked */
+  onClearFilters?: () => void;
 }
 
 /**
- * FilterPanel Component (Placeholder)
+ * FilterPanel Component
  *
- * Placeholder component for filter functionality.
- * To be implemented with category and area/cuisine filters.
- *
- * The component receives all necessary props for implementation:
- * - categories/areas: Available filter options
- * - selectedCategories/selectedAreas: Currently active filters
- * - onCategoryToggle/onAreaToggle: Callbacks to update filter state
- *
- * This should be implemented with checkboxes or similar UI controls.
- **/
+ * Displays filter controls for categories and areas/cuisines.
+ * Allows users to multi-select filters using checkboxes.
+ */
 export default function FilterPanel({
   categories,
   areas,
@@ -38,18 +33,115 @@ export default function FilterPanel({
   selectedAreas,
   onCategoryToggle,
   onAreaToggle,
+  onClearFilters,
 }: FilterPanelProps) {
+  const hasActiveFilters =
+    selectedCategories.length > 0 || selectedAreas.length > 0;
+
   return (
-    <div className="bg-white rounded-lg shadow-md p-6">
-      <h2 className="text-xl font-semibold text-gray-900 mb-4">Filters</h2>
-      <p className="text-sm text-gray-500 mb-4">
-        Filter controls to be implemented here.
-      </p>
-      <div className="text-xs text-gray-400">
-        <p>Categories: {categories.length}</p>
-        <p>Areas: {areas.length}</p>
-        <p>Selected: {selectedCategories.length + selectedAreas.length}</p>
+    <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
+      <div className="flex items-center justify-between mb-6">
+        <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
+          Filters
+        </h2>
+        {hasActiveFilters && (
+          <button
+            onClick={onClearFilters}
+            className="text-sm text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 font-medium transition-colors"
+            aria-label="Clear all filters"
+          >
+            Clear All
+          </button>
+        )}
       </div>
+
+      {/* Category Filters */}
+      <FilterSection
+        title="Categories"
+        items={categories.map((cat) => cat.strCategory)}
+        selectedItems={selectedCategories}
+        onToggle={onCategoryToggle}
+      />
+
+      {/* Divider */}
+      <div className="my-6 border-t border-gray-200 dark:border-gray-700" />
+
+      {/* Area Filters */}
+      <FilterSection
+        title="Cuisines"
+        items={areas.map((area) => area.strArea)}
+        selectedItems={selectedAreas}
+        onToggle={onAreaToggle}
+      />
+    </div>
+  );
+}
+
+/**
+ * FilterSection Component
+ * Reusable section for displaying a group of filter checkboxes
+ */
+interface FilterSectionProps {
+  title: string;
+  items: string[];
+  selectedItems: string[];
+  onToggle: (item: string) => void;
+}
+
+function FilterSection({
+  title,
+  items,
+  selectedItems,
+  onToggle,
+}: FilterSectionProps) {
+  return (
+    <div>
+      <h3 className="text-sm font-medium text-gray-900 dark:text-white mb-3">
+        {title}
+      </h3>
+      <div className="space-y-2 max-h-64 overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-gray-300 dark:scrollbar-thumb-gray-600 scrollbar-track-transparent">
+        {items.map((item) => (
+          <FilterCheckbox
+            key={item}
+            label={item}
+            checked={selectedItems.includes(item)}
+            onChange={() => onToggle(item)}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * FilterCheckbox Component
+ * Individual checkbox for a filter option
+ */
+interface FilterCheckboxProps {
+  label: string;
+  checked: boolean;
+  onChange: () => void;
+}
+
+function FilterCheckbox({ label, checked, onChange }: FilterCheckboxProps) {
+  const id = `filter-${label.toLowerCase().replace(/\s+/g, "-")}`;
+
+  return (
+    <div className="flex items-center">
+      <input
+        type="checkbox"
+        id={id}
+        checked={checked}
+        onChange={onChange}
+        className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded cursor-pointer"
+        aria-label={`Filter by ${label}`}
+      />
+      <label
+        htmlFor={id}
+        className="ml-3 text-sm text-gray-700 dark:text-gray-300 cursor-pointer select-none"
+      >
+        {label}
+      </label>
     </div>
   );
 }

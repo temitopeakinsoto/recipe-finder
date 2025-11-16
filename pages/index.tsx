@@ -1,147 +1,368 @@
+import { useState, useEffect, useCallback, useMemo } from "react";
+import { useRouter } from "next/router";
 import SearchBar from "@/components/SearchBar";
 import FilterPanel from "@/components/FilterPanel";
 import ActiveFilters from "@/components/ActiveFilters";
 import MealCard from "@/components/MealCard";
 import Pagination from "@/components/Pagination";
+import EmptyState from "@/components/EmptyState";
+import { getCategories, getAreas, getFilteredMeals } from "@/lib/api";
+import type { Category, Area, MealSummary } from "@/types/meal";
 
-// Mock data for demonstration
-const mockCategories = [
-  {
-    idCategory: "1",
-    strCategory: "Beef",
-    strCategoryThumb: "",
-    strCategoryDescription: "",
-  },
-  {
-    idCategory: "2",
-    strCategory: "Chicken",
-    strCategoryThumb: "",
-    strCategoryDescription: "",
-  },
-  {
-    idCategory: "3",
-    strCategory: "Dessert",
-    strCategoryThumb: "",
-    strCategoryDescription: "",
-  },
-  {
-    idCategory: "4",
-    strCategory: "Vegetarian",
-    strCategoryThumb: "",
-    strCategoryDescription: "",
-  },
-];
+/**
+ * Number of meals to display per page
+ */
+const ITEMS_PER_PAGE = 12;
 
-const mockAreas = [
-  { strArea: "Italian" },
-  { strArea: "Mexican" },
-  { strArea: "Chinese" },
-  { strArea: "American" },
-];
-
-const mockMeals = [
-  {
-    idMeal: "52772",
-    strMeal: "Teriyaki Chicken Casserole",
-    strMealThumb:
-      "https://www.themealdb.com/images/media/meals/wvpsxx1468256321.jpg",
-    strCategory: "Chicken",
-    strArea: "Japanese",
-  },
-  {
-    idMeal: "52944",
-    strMeal: "Escovitch Fish",
-    strMealThumb: "https://www.themealdb.com/images/media/meals/1520084413.jpg",
-    strCategory: "Seafood",
-    strArea: "Jamaican",
-  },
-  {
-    idMeal: "52929",
-    strMeal: "Timbits",
-    strMealThumb:
-      "https://www.themealdb.com/images/media/meals/txsupu1511815755.jpg",
-    strCategory: "Dessert",
-    strArea: "Canadian",
-  },
-  {
-    idMeal: "52768",
-    strMeal: "Apple Frangipan Tart",
-    strMealThumb:
-      "https://www.themealdb.com/images/media/meals/wxywrq1468235067.jpg",
-    strCategory: "Dessert",
-    strArea: "British",
-  },
-  {
-    idMeal: "52893",
-    strMeal: "Apple & Blackberry Crumble",
-    strMealThumb:
-      "https://www.themealdb.com/images/media/meals/xvsurr1511719182.jpg",
-    strCategory: "Dessert",
-    strArea: "British",
-  },
-  {
-    idMeal: "52767",
-    strMeal: "Bakewell tart",
-    strMealThumb:
-      "https://www.themealdb.com/images/media/meals/wyrqqq1468233628.jpg",
-    strCategory: "Dessert",
-    strArea: "British",
-  },
-  {
-    idMeal: "52792",
-    strMeal: "Bread and Butter Pudding",
-    strMealThumb:
-      "https://www.themealdb.com/images/media/meals/xqwwpy1483908697.jpg",
-    strCategory: "Dessert",
-    strArea: "British",
-  },
-  {
-    idMeal: "52803",
-    strMeal: "Beef Wellington",
-    strMealThumb:
-      "https://www.themealdb.com/images/media/meals/vvpprx1487325699.jpg",
-    strCategory: "Beef",
-    strArea: "British",
-  },
-];
+/**
+ * Debounce delay for search input (in milliseconds)
+ */
+const SEARCH_DEBOUNCE_DELAY = 500;
 
 /**
  * Home Page Component
  *
- * This is a mock layout demonstrating how to integrate all the provided components.
- * Candidates should:
- * 1. Replace mock data with real API calls to TheMealDB
- * 2. Implement actual state management (useState/useReducer)
- * 3. Connect handlers to update state and trigger API calls
- * 4. Implement caching strategy for API responses
- * 5. Add error handling and loading states
- * 6. Complete the FilterPanel component implementation
+ * Main page for the Recipe Finder application.
+ * Features:
+ * - Search meals by name
+ * - Filter by category and cuisine
+ * - Paginated results
+ * - Loading and error states
+ * - Caching for improved performance
  */
 export default function Home() {
-  // Mock handlers
-  const handleSearch = (query: string) => {
-    console.log("Search:", query);
-  };
+  const router = useRouter();
 
-  const handleRemoveCategory = (category: string) => {
-    console.log("Remove category:", category);
-  };
+  // Filter options state
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [areas, setAreas] = useState<Area[]>([]);
 
-  const handleRemoveArea = (area: string) => {
-    console.log("Remove area:", area);
-  };
+  // Filter selection state
+  const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
+  const [selectedAreas, setSelectedAreas] = useState<string[]>([]);
 
-  const handleCategoryToggle = (category: string) => {
-    console.log("Toggle category:", category);
-  };
+  // Search state
+  const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
 
-  const handleAreaToggle = (area: string) => {
-    console.log("Toggle area:", area);
-  };
+  // Results state
+  const [allMeals, setAllMeals] = useState<MealSummary[]>([]);
 
-  const handlePageChange = (page: number) => {
-    console.log("Change to page:", page);
-  };
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1);
+
+  // Loading states
+  const [isLoadingFilters, setIsLoadingFilters] = useState(true);
+  const [isLoadingMeals, setIsLoadingMeals] = useState(false);
+
+  // Error state
+  const [error, setError] = useState<string | null>(null);
+
+  // Track if this is the initial load to prevent double fetching
+  const [isInitialized, setIsInitialized] = useState(false);
+
+  /**
+   * Initialize state from URL parameters on mount
+   */
+  useEffect(() => {
+    if (!router.isReady) return;
+
+    const {
+      q,
+      categories: urlCategories,
+      areas: urlAreas,
+      page,
+    } = router.query;
+
+    // Set search query from URL
+    if (typeof q === "string" && q) {
+      setSearchQuery(q);
+      setDebouncedSearchQuery(q);
+    }
+
+    // Set categories from URL
+    if (urlCategories) {
+      const cats = Array.isArray(urlCategories)
+        ? urlCategories
+        : [urlCategories];
+      setSelectedCategories(cats);
+    }
+
+    // Set areas from URL
+    if (urlAreas) {
+      const ars = Array.isArray(urlAreas) ? urlAreas : [urlAreas];
+      setSelectedAreas(ars);
+    }
+
+    // Set page from URL
+    if (typeof page === "string" && page) {
+      const pageNum = parseInt(page, 10);
+      if (!isNaN(pageNum) && pageNum > 0) {
+        setCurrentPage(pageNum);
+      }
+    }
+
+    setIsInitialized(true);
+  }, [router.isReady, router.query]);
+
+  /**
+   * Update URL when filters or search change
+   */
+  useEffect(() => {
+    if (!isInitialized) return;
+
+    const params = new URLSearchParams();
+
+    if (debouncedSearchQuery) {
+      params.set("q", debouncedSearchQuery);
+    }
+
+    if (selectedCategories.length > 0) {
+      selectedCategories.forEach((cat) => params.append("categories", cat));
+    }
+
+    if (selectedAreas.length > 0) {
+      selectedAreas.forEach((area) => params.append("areas", area));
+    }
+
+    if (currentPage > 1) {
+      params.set("page", currentPage.toString());
+    }
+
+    const queryString = params.toString();
+    const newUrl = queryString ? `/?${queryString}` : "/";
+
+    // Only update if URL has changed
+    if (router.asPath !== newUrl) {
+      router.replace(newUrl, undefined, { shallow: true });
+    }
+  }, [
+    debouncedSearchQuery,
+    selectedCategories,
+    selectedAreas,
+    currentPage,
+    isInitialized,
+    router,
+  ]);
+
+  /**
+   * Load categories and areas on mount
+   */
+  useEffect(() => {
+    async function loadFilterOptions() {
+      setIsLoadingFilters(true);
+      setError(null);
+      try {
+        const [categoriesData, areasData] = await Promise.all([
+          getCategories(),
+          getAreas(),
+        ]);
+        setCategories(categoriesData);
+        setAreas(areasData);
+      } catch (err) {
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Failed to load filter options. Please refresh the page."
+        );
+      } finally {
+        setIsLoadingFilters(false);
+      }
+    }
+
+    loadFilterOptions();
+  }, []);
+
+  /**
+   * Debounce search query
+   */
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearchQuery(searchQuery);
+    }, SEARCH_DEBOUNCE_DELAY);
+
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
+  /**
+   * Fetch meals when filters or search query change
+   */
+  // useEffect(() => {
+  //   async function loadMeals() {
+  //     setIsLoadingMeals(true);
+  //     setError(null);
+  //     setCurrentPage(1); // Reset to first page when filters change
+
+  //     try {
+  //       // If no search query and no filters, show empty state
+  //       if (
+  //         !debouncedSearchQuery &&
+  //         selectedCategories.length === 0 &&
+  //         selectedAreas.length === 0
+  //       ) {
+  //         setAllMeals([]);
+  //         setIsLoadingMeals(false);
+  //         return;
+  //       }
+
+  //       // Fetch filtered meals
+  //       const meals = await getFilteredMeals({
+  //         searchQuery: debouncedSearchQuery,
+  //         categories: selectedCategories,
+  //         areas: selectedAreas,
+  //       });
+
+  //       setAllMeals(meals);
+  //     } catch (err) {
+  //       setError(
+  //         err instanceof Error
+  //           ? err.message
+  //           : "Failed to load meals. Please try again."
+  //       );
+  //       setAllMeals([]);
+  //     } finally {
+  //       setIsLoadingMeals(false);
+  //     }
+  //   }
+
+  //   loadMeals();
+  // }, [debouncedSearchQuery, selectedCategories, selectedAreas]);
+
+  useEffect(() => {
+    async function loadMeals() {
+      setIsLoadingMeals(true);
+      setError(null);
+
+      // Only reset page AFTER initial hydration
+      if (isInitialized) {
+        setCurrentPage(1);
+      }
+
+      try {
+        if (
+          !debouncedSearchQuery &&
+          selectedCategories.length === 0 &&
+          selectedAreas.length === 0
+        ) {
+          setAllMeals([]);
+          setIsLoadingMeals(false);
+          return;
+        }
+
+        const meals = await getFilteredMeals({
+          searchQuery: debouncedSearchQuery,
+          categories: selectedCategories,
+          areas: selectedAreas,
+        });
+
+        setAllMeals(meals);
+      } catch (err) {
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Failed to load meals. Please try again."
+        );
+        setAllMeals([]);
+      } finally {
+        setIsLoadingMeals(false);
+      }
+    }
+
+    loadMeals();
+  }, [debouncedSearchQuery, selectedCategories, selectedAreas, isInitialized]);
+
+  /**
+   * Calculate paginated meals
+   */
+  const paginatedMeals = useMemo(() => {
+    const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
+    const endIndex = startIndex + ITEMS_PER_PAGE;
+    return allMeals.slice(startIndex, endIndex);
+  }, [allMeals, currentPage]);
+
+  /**
+   * Calculate total pages
+   */
+  const totalPages = useMemo(() => {
+    return Math.ceil(allMeals.length / ITEMS_PER_PAGE);
+  }, [allMeals.length]);
+
+  /**
+   * Handle search submission
+   */
+  const handleSearch = useCallback((query: string) => {
+    setSearchQuery(query);
+  }, []);
+
+  /**
+   * Handle category filter toggle
+   */
+  const handleCategoryToggle = useCallback((category: string) => {
+    setSelectedCategories((prev) =>
+      prev.includes(category)
+        ? prev.filter((c) => c !== category)
+        : [...prev, category]
+    );
+  }, []);
+
+  /**
+   * Handle area filter toggle
+   */
+  const handleAreaToggle = useCallback((area: string) => {
+    setSelectedAreas((prev) =>
+      prev.includes(area) ? prev.filter((a) => a !== area) : [...prev, area]
+    );
+  }, []);
+
+  /**
+   * Handle category filter removal from ActiveFilters
+   */
+  const handleRemoveCategory = useCallback((category: string) => {
+    setSelectedCategories((prev) => prev.filter((c) => c !== category));
+  }, []);
+
+  /**
+   * Handle area filter removal from ActiveFilters
+   */
+  const handleRemoveArea = useCallback((area: string) => {
+    setSelectedAreas((prev) => prev.filter((a) => a !== area));
+  }, []);
+
+  /**
+   * Handle clear all filters
+   */
+  const handleClearFilters = useCallback(() => {
+    setSelectedCategories([]);
+    setSelectedAreas([]);
+  }, []);
+
+  /**
+   * Handle page change
+   */
+  const handlePageChange = useCallback((page: number) => {
+    setCurrentPage(page);
+    // Scroll to top of results
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }, []);
+
+  /**
+   * Determine if we should show the empty state
+   */
+  const showEmptyState =
+    !isLoadingMeals &&
+    allMeals.length === 0 &&
+    (debouncedSearchQuery ||
+      selectedCategories.length > 0 ||
+      selectedAreas.length > 0);
+
+  /**
+   * Show initial empty state (no search/filters)
+   */
+  const showInitialState =
+    !isLoadingMeals &&
+    !debouncedSearchQuery &&
+    selectedCategories.length === 0 &&
+    selectedAreas.length === 0;
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
@@ -155,11 +376,23 @@ export default function Home() {
           </p>
         </header>
 
+        {/* Global Error Message */}
+        {error && (
+          <div
+            className="mb-6 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg"
+            role="alert"
+          >
+            <p className="font-medium">Error</p>
+            <p className="text-sm">{error}</p>
+          </div>
+        )}
+
         {/* Search Bar */}
         <div className="mb-6">
           <SearchBar
             placeholder="Search for meals..."
             onSearch={handleSearch}
+            defaultValue={searchQuery}
           />
         </div>
 
@@ -167,51 +400,120 @@ export default function Home() {
         <div className="flex flex-col lg:flex-row gap-6">
           {/* Sidebar - Filters */}
           <aside className="lg:w-64 flex-shrink-0">
-            <FilterPanel
-              categories={mockCategories}
-              areas={mockAreas}
-              selectedCategories={["Dessert"]}
-              selectedAreas={["British"]}
-              onCategoryToggle={handleCategoryToggle}
-              onAreaToggle={handleAreaToggle}
-            />
+            {isLoadingFilters ? (
+              <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
+                <div className="animate-pulse">
+                  <div className="h-6 bg-gray-200 dark:bg-gray-700 rounded w-20 mb-4"></div>
+                  <div className="space-y-3">
+                    <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded"></div>
+                    <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded"></div>
+                    <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded"></div>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <FilterPanel
+                categories={categories}
+                areas={areas}
+                selectedCategories={selectedCategories}
+                selectedAreas={selectedAreas}
+                onCategoryToggle={handleCategoryToggle}
+                onAreaToggle={handleAreaToggle}
+                onClearFilters={handleClearFilters}
+              />
+            )}
           </aside>
 
           {/* Main Content */}
           <main className="flex-1">
             {/* Active Filters */}
             <ActiveFilters
-              selectedCategories={["Dessert"]}
-              selectedAreas={["British"]}
+              selectedCategories={selectedCategories}
+              selectedAreas={selectedAreas}
               onRemoveCategory={handleRemoveCategory}
               onRemoveArea={handleRemoveArea}
             />
 
+            {/* Loading State */}
+            {isLoadingMeals && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                {[...Array(6)].map((_, i) => (
+                  <div
+                    key={i}
+                    className="bg-white dark:bg-gray-800 rounded-lg shadow-md overflow-hidden animate-pulse"
+                  >
+                    <div className="h-48 bg-gray-200 dark:bg-gray-700"></div>
+                    <div className="p-4">
+                      <div className="h-6 bg-gray-200 dark:bg-gray-700 rounded mb-2"></div>
+                      <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-3/4"></div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Initial State (no search or filters) */}
+            {showInitialState && (
+              <div className="text-center py-12">
+                <svg
+                  className="mx-auto h-24 w-24 text-gray-400 mb-4"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  aria-hidden="true"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={1.5}
+                    d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+                  />
+                </svg>
+                <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">
+                  Start your search
+                </h3>
+                <p className="text-gray-500 dark:text-gray-400">
+                  Search for meals or select filters to discover delicious
+                  recipes
+                </p>
+              </div>
+            )}
+
+            {/* Empty State (with filters/search but no results) */}
+            {showEmptyState && (
+              <EmptyState
+                searchQuery={debouncedSearchQuery}
+                selectedCategories={selectedCategories}
+                selectedAreas={selectedAreas}
+              />
+            )}
+
             {/* Meal Grid */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-              {mockMeals.map((meal) => (
-                <MealCard
-                  key={meal.idMeal}
-                  id={meal.idMeal}
-                  name={meal.strMeal}
-                  thumbnail={meal.strMealThumb}
-                  category={meal.strCategory}
-                  area={meal.strArea}
-                />
-              ))}
-            </div>
+            {!isLoadingMeals && paginatedMeals.length > 0 && (
+              <>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {paginatedMeals.map((meal) => (
+                    <MealCard
+                      key={meal.idMeal}
+                      id={meal.idMeal}
+                      name={meal.strMeal}
+                      thumbnail={meal.strMealThumb}
+                      category={meal.strCategory}
+                      area={meal.strArea}
+                    />
+                  ))}
+                </div>
 
-            {/* Pagination */}
-            <Pagination
-              currentPage={1}
-              totalPages={5}
-              onPageChange={handlePageChange}
-            />
-
-            {/* <EmptyState
-              title="No meals found"
-              message="Try adjusting your search or filters"
-            /> */}
+                {/* Pagination */}
+                {totalPages > 1 && (
+                  <Pagination
+                    currentPage={currentPage}
+                    totalPages={totalPages}
+                    onPageChange={handlePageChange}
+                  />
+                )}
+              </>
+            )}
           </main>
         </div>
       </div>
